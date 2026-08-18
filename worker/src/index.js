@@ -7,12 +7,14 @@ const corsHeaders = {
 export default {
     async fetch(request, env) {
 
+        // CORS preflight
         if (request.method === "OPTIONS") {
             return new Response(null, {
                 headers: corsHeaders
             });
         }
 
+        // Health check
         if (request.method === "GET") {
             return json({
                 success: true,
@@ -21,9 +23,13 @@ export default {
             });
         }
 
+        // Только POST
         if (request.method !== "POST") {
             return json(
-                { success: false, error: "Method not allowed" },
+                {
+                    success: false,
+                    error: "Method not allowed"
+                },
                 405
             );
         }
@@ -41,6 +47,7 @@ export default {
                 );
             }
 
+            // Проверяем Telegram initData
             const telegramUser = await validateTelegramInitData(
                 body.initData,
                 env.TELEGRAM_BOT_TOKEN
@@ -56,18 +63,22 @@ export default {
                 );
             }
 
+            // Находим или создаём игрока
             const player = await getOrCreatePlayer(
                 telegramUser,
                 env
             );
 
+            // Находим или создаём город
             const city = await getOrCreateCity(
                 player.id,
                 env
             );
 
+            // Возвращаем данные Mini App
             return json({
                 success: true,
+
                 player: {
                     id: player.id,
                     telegram_id: player.telegram_id,
@@ -76,6 +87,7 @@ export default {
                     last_name: player.last_name,
                     photo_url: player.photo_url
                 },
+
                 city: {
                     id: city.id,
                     name: city.name,
@@ -85,7 +97,7 @@ export default {
 
         } catch (error) {
 
-            console.error(error);
+            console.error("Worker error:", error);
 
             return json(
                 {
@@ -99,11 +111,16 @@ export default {
 };
 
 
-/* =========================================
-   TELEGRAM AUTHENTICATION
-   ========================================= */
+/*
+==================================================
+TELEGRAM AUTHENTICATION
+==================================================
+*/
 
-async function validateTelegramInitData(initData, botToken) {
+async function validateTelegramInitData(
+    initData,
+    botToken
+) {
 
     const params = new URLSearchParams(initData);
 
@@ -113,203 +130,378 @@ async function validateTelegramInitData(initData, botToken) {
         return null;
     }
 
+    // Удаляем hash из строки проверки
     params.delete("hash");
 
+    // Формируем data-check-string
     const dataCheckString = [...params.entries()]
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([key, value]) => `${key}=${value}`)
+        .sort(([keyA], [keyB]) =>
+            keyA.localeCompare(keyB)
+        )
+        .map(([key, value]) =>
+            `${key}=${value}`
+        )
         .join("\n");
 
-    const secretKey = await crypto.subtle.importKey(
-        "raw",
-        new TextEncoder().encode("WebAppData"),
-        {
-            name: "HMAC",
-            hash: "SHA-256"
-        },
-        false,
-        ["sign"]
-    );
 
-    const secret = await crypto.subtle.sign(
-        "HMAC",
-        secretKey,
-        new TextEncoder().encode(botToken)
-    );
+    /*
+    --------------------------------------------------
+    Первый HMAC
 
-    const validationKey = await crypto.subtle.importKey(
-        "raw",
-        secret,
-        {
-            name: "HMAC",
-            hash: "SHA-256"
-        },
-        false,
-        ["sign"]
-    );
+    secret_key =
+    HMAC-SHA256(
+        key = bot_token,
+        data = "WebAppData"
+    )
+    --------------------------------------------------
+    */
 
-    const calculatedHashBuffer = await crypto.subtle.sign(
-        "HMAC",
-        validationKey,
-        new TextEncoder().encode(dataCheckString)
-    );
+    const botTokenKey =
+        await crypto.subtle.importKey(
+            "raw",
+            new TextEncoder().encode(botToken),
+            {
+                name: "HMAC",
+                hash: "SHA-256"
+            },
+            false,
+            ["sign"]
+        );
 
-    const calculatedHash = [...new Uint8Array(calculatedHashBuffer)]
-        .map(byte => byte.toString(16).padStart(2, "0"))
+
+    const secretKey =
+        await crypto.subtle.sign(
+            "HMAC",
+            botTokenKey,
+            new TextEncoder().encode("WebAppData")
+        );
+
+
+    /*
+    --------------------------------------------------
+    Второй HMAC
+
+    calculated_hash =
+    HMAC-SHA256(
+        key = secret_key,
+        data = data_check_string
+    )
+    --------------------------------------------------
+    */
+
+    const validationKey =
+        await crypto.subtle.importKey(
+            "raw",
+            secretKey,
+            {
+                name: "HMAC",
+                hash: "SHA-256"
+            },
+            false,
+            ["sign"]
+        );
+
+
+    const calculatedHashBuffer =
+        await crypto.subtle.sign(
+            "HMAC",
+            validationKey,
+            new TextEncoder().encode(
+                dataCheckString
+            )
+        );
+
+
+    const calculatedHash =
+        [...new Uint8Array(
+            calculatedHashBuffer
+        )]
+        .map(byte =>
+            byte
+                .toString(16)
+                .padStart(2, "0")
+        )
         .join("");
 
-    if (!constantTimeEqual(calculatedHash, receivedHash)) {
+
+    // Сравниваем хэши
+    if (
+        !constantTimeEqual(
+            calculatedHash,
+            receivedHash
+        )
+    ) {
         return null;
     }
 
-    const authDate = Number(params.get("auth_date"));
+
+    /*
+    --------------------------------------------------
+    Проверяем auth_date
+    --------------------------------------------------
+    */
+
+    const authDate =
+        Number(params.get("auth_date"));
 
     if (!authDate) {
         return null;
     }
 
-    // Не принимаем слишком старые данные Telegram.
-    const now = Math.floor(Date.now() / 1000);
 
-    if (now - authDate > 86400) {
+    const currentTime =
+        Math.floor(
+            Date.now() / 1000
+        );
+
+
+    const dataAge =
+        currentTime - authDate;
+
+
+    // Не принимаем данные старше 24 часов
+    if (
+        dataAge < 0 ||
+        dataAge > 86400
+    ) {
         return null;
     }
 
-    const userString = params.get("user");
+
+    /*
+    --------------------------------------------------
+    Получаем пользователя Telegram
+    --------------------------------------------------
+    */
+
+    const userString =
+        params.get("user");
 
     if (!userString) {
         return null;
     }
 
+
     try {
-        return JSON.parse(userString);
+
+        return JSON.parse(
+            userString
+        );
+
     } catch {
+
         return null;
     }
 }
 
 
-/* =========================================
-   PLAYERS
-   ========================================= */
+/*
+==================================================
+PLAYERS
+==================================================
+*/
 
-async function getOrCreatePlayer(user, env) {
+async function getOrCreatePlayer(
+    user,
+    env
+) {
 
-    const existing = await supabaseRequest(
-        `/rest/v1/players?telegram_id=eq.${encodeURIComponent(user.id)}&select=*`,
-        {
-            method: "GET"
-        },
-        env
-    );
+    // Ищем игрока по Telegram ID
+    const existing =
+        await supabaseRequest(
+            `/rest/v1/players?telegram_id=eq.${encodeURIComponent(
+                user.id
+            )}&select=*`,
+            {
+                method: "GET"
+            },
+            env
+        );
 
+
+    // Игрок уже существует
     if (existing.length > 0) {
 
-        const player = existing[0];
+        const player =
+            existing[0];
 
-        const updated = await supabaseRequest(
-            `/rest/v1/players?id=eq.${player.id}`,
-            {
-                method: "PATCH",
-                headers: {
-                    "Prefer": "return=representation"
+
+        // Обновляем актуальные данные Telegram
+        const updated =
+            await supabaseRequest(
+                `/rest/v1/players?id=eq.${player.id}`,
+                {
+                    method: "PATCH",
+
+                    headers: {
+                        "Prefer":
+                            "return=representation"
+                    },
+
+                    body: JSON.stringify({
+                        username:
+                            user.username ?? null,
+
+                        first_name:
+                            user.first_name ?? null,
+
+                        last_name:
+                            user.last_name ?? null,
+
+                        photo_url:
+                            user.photo_url ?? null,
+
+                        updated_at:
+                            new Date().toISOString()
+                    })
                 },
+                env
+            );
+
+
+        return updated[0];
+    }
+
+
+    // Создаём нового игрока
+    const created =
+        await supabaseRequest(
+            "/rest/v1/players",
+            {
+                method: "POST",
+
+                headers: {
+                    "Prefer":
+                        "return=representation"
+                },
+
                 body: JSON.stringify({
-                    username: user.username ?? null,
-                    first_name: user.first_name ?? null,
-                    last_name: user.last_name ?? null,
-                    photo_url: user.photo_url ?? null,
-                    updated_at: new Date().toISOString()
+
+                    telegram_id:
+                        user.id,
+
+                    username:
+                        user.username ?? null,
+
+                    first_name:
+                        user.first_name ?? null,
+
+                    last_name:
+                        user.last_name ?? null,
+
+                    photo_url:
+                        user.photo_url ?? null
                 })
             },
             env
         );
 
-        return updated[0];
-    }
-
-    const created = await supabaseRequest(
-        `/rest/v1/players`,
-        {
-            method: "POST",
-            headers: {
-                "Prefer": "return=representation"
-            },
-            body: JSON.stringify({
-                telegram_id: user.id,
-                username: user.username ?? null,
-                first_name: user.first_name ?? null,
-                last_name: user.last_name ?? null,
-                photo_url: user.photo_url ?? null
-            })
-        },
-        env
-    );
 
     return created[0];
 }
 
 
-/* =========================================
-   CITIES
-   ========================================= */
+/*
+==================================================
+CITIES
+==================================================
+*/
 
-async function getOrCreateCity(playerId, env) {
+async function getOrCreateCity(
+    playerId,
+    env
+) {
 
-    const existing = await supabaseRequest(
-        `/rest/v1/cities?owner_id=eq.${encodeURIComponent(playerId)}&select=*`,
-        {
-            method: "GET"
-        },
-        env
-    );
+    // Ищем существующий город
+    const existing =
+        await supabaseRequest(
+            `/rest/v1/cities?owner_id=eq.${encodeURIComponent(
+                playerId
+            )}&select=*`,
+            {
+                method: "GET"
+            },
+            env
+        );
 
+
+    // Город уже существует
     if (existing.length > 0) {
         return existing[0];
     }
 
-    const created = await supabaseRequest(
-        `/rest/v1/cities`,
-        {
-            method: "POST",
-            headers: {
-                "Prefer": "return=representation"
+
+    // Создаём новый город
+    const created =
+        await supabaseRequest(
+            "/rest/v1/cities",
+            {
+                method: "POST",
+
+                headers: {
+                    "Prefer":
+                        "return=representation"
+                },
+
+                body: JSON.stringify({
+
+                    owner_id:
+                        playerId,
+
+                    name:
+                        "Новое поселение",
+
+                    is_public:
+                        true
+                })
             },
-            body: JSON.stringify({
-                owner_id: playerId,
-                name: "Новое поселение",
-                is_public: true
-            })
-        },
-        env
-    );
+            env
+        );
+
 
     return created[0];
 }
 
 
-/* =========================================
-   SUPABASE
-   ========================================= */
+/*
+==================================================
+SUPABASE
+==================================================
+*/
 
-async function supabaseRequest(path, options, env) {
+async function supabaseRequest(
+    path,
+    options,
+    env
+) {
 
-    const response = await fetch(
-        `${env.SUPABASE_URL}${path}`,
-        {
-            ...options,
-            headers: {
-                "Content-Type": "application/json",
-                "apikey": env.SUPABASE_SECRET_KEY,
-                "Authorization": `Bearer ${env.SUPABASE_SECRET_KEY}`,
-                ...(options.headers || {})
+    const response =
+        await fetch(
+            `${env.SUPABASE_URL}${path}`,
+            {
+                ...options,
+
+                headers: {
+
+                    "Content-Type":
+                        "application/json",
+
+                    "apikey":
+                        env.SUPABASE_SECRET_KEY,
+
+                    "Authorization":
+                        `Bearer ${env.SUPABASE_SECRET_KEY}`,
+
+                    ...(options.headers || {})
+                }
             }
-        }
-    );
+        );
+
 
     if (!response.ok) {
 
-        const errorText = await response.text();
+        const errorText =
+            await response.text();
 
         console.error(
             "Supabase error:",
@@ -317,42 +509,67 @@ async function supabaseRequest(path, options, env) {
             errorText
         );
 
-        throw new Error("Supabase request failed");
+        throw new Error(
+            "Supabase request failed"
+        );
     }
+
 
     return response.json();
 }
 
 
-/* =========================================
-   HELPERS
-   ========================================= */
+/*
+==================================================
+HELPERS
+==================================================
+*/
 
-function constantTimeEqual(a, b) {
+function constantTimeEqual(
+    a,
+    b
+) {
 
     if (a.length !== b.length) {
         return false;
     }
 
+
     let result = 0;
 
-    for (let i = 0; i < a.length; i++) {
-        result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+
+    for (
+        let i = 0;
+        i < a.length;
+        i++
+    ) {
+
+        result |=
+            a.charCodeAt(i) ^
+            b.charCodeAt(i);
     }
+
 
     return result === 0;
 }
 
 
-function json(data, status = 200) {
+function json(
+    data,
+    status = 200
+) {
 
     return new Response(
         JSON.stringify(data),
+
         {
             status,
+
             headers: {
                 ...corsHeaders,
-                "Content-Type": "application/json; charset=utf-8"
+
+                "Content-Type":
+                    "application/json; charset=utf-8"
             }
         }
     );
