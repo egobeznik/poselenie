@@ -488,8 +488,8 @@ async function supabaseRequest(
     );
 
     throw new Error(
-      "Supabase request failed"
-    );
+  `Supabase request failed: ${response.status} ${errorText}`
+);
   }
 
   return response.json();
