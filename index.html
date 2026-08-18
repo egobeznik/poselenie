@@ -2,16 +2,108 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
+
     <meta
         name="viewport"
         content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     >
+
     <title>Поселение</title>
+
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            margin: 0;
+            width: 100%;
+            min-height: 100%;
+            background: #eef3e8;
+            font-family: Arial, sans-serif;
+        }
+
+        body {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+        }
+
+        .app {
+            width: min(420px, 100%);
+            padding: 28px;
+            border-radius: 20px;
+            background: white;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.08);
+        }
+
+        h1 {
+            margin: 0 0 10px;
+        }
+
+        .status {
+            margin-top: 20px;
+            padding: 16px;
+            border-radius: 12px;
+            background: #f1f5ef;
+        }
+
+        .value {
+            margin-top: 6px;
+            font-weight: 700;
+            word-break: break-word;
+        }
+    </style>
 </head>
+
 <body>
 
+<div class="app">
+
     <h1>Поселение</h1>
-    <p>Инициализация проекта...</p>
+
+    <p>Telegram Mini App подключён.</p>
+
+    <div class="status">
+        <div>Пользователь</div>
+        <div class="value" id="user">Проверка...</div>
+    </div>
+
+</div>
+
+<script>
+    const tg = window.Telegram.WebApp;
+
+    tg.ready();
+    tg.expand();
+
+    const userElement = document.getElementById("user");
+
+    if (tg.initDataUnsafe?.user) {
+
+        const user = tg.initDataUnsafe.user;
+
+        const name = [
+            user.first_name,
+            user.last_name
+        ]
+            .filter(Boolean)
+            .join(" ");
+
+        userElement.textContent =
+            `${name} (@${user.username || "без username"})`;
+
+    } else {
+
+        userElement.textContent =
+            "Mini App открыт не из Telegram";
+
+    }
+</script>
 
 </body>
 </html>
