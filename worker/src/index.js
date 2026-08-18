@@ -139,7 +139,7 @@ export default {
 
       return json({
         success: false,
-        error: "Internal server error"
+        error: error instanceof Error ? error.message : String(error)
       }, 500);
     }
   }
