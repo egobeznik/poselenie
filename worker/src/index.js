@@ -14,3 +14,5 @@ export default {
         );
     }
 };
+
+// Poselenie API v0.1
