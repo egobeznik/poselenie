@@ -52,10 +52,27 @@
             background: #f1f5ef;
         }
 
+        .row {
+            margin-top: 12px;
+        }
+
+        .label {
+            font-size: 13px;
+            color: #6b7168;
+        }
+
         .value {
-            margin-top: 6px;
+            margin-top: 4px;
             font-weight: 700;
             word-break: break-word;
+        }
+
+        .error {
+            color: #a33;
+        }
+
+        .loading {
+            color: #667;
         }
     </style>
 </head>
@@ -66,43 +83,176 @@
 
     <h1>Поселение</h1>
 
-    <p>Telegram Mini App подключён.</p>
+    <p id="status" class="loading">
+        Подключение...
+    </p>
 
     <div class="status">
-        <div>Пользователь</div>
-        <div class="value" id="user">Проверка...</div>
+
+        <div class="row">
+            <div class="label">Игрок</div>
+            <div class="value" id="user">
+                Проверка...
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="label">Поселение</div>
+            <div class="value" id="city">
+                Проверка...
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="label">ID города</div>
+            <div class="value" id="cityId">
+                Проверка...
+            </div>
+        </div>
+
     </div>
 
 </div>
 
 <script>
+
     const tg = window.Telegram.WebApp;
+
+    const API_URL =
+        "https://poselenie-api.egobeznik.workers.dev";
+
+    const statusElement =
+        document.getElementById("status");
+
+    const userElement =
+        document.getElementById("user");
+
+    const cityElement =
+        document.getElementById("city");
+
+    const cityIdElement =
+        document.getElementById("cityId");
+
 
     tg.ready();
     tg.expand();
 
-    const userElement = document.getElementById("user");
 
-    if (tg.initDataUnsafe?.user) {
+    async function authenticate() {
 
-        const user = tg.initDataUnsafe.user;
+        if (!tg.initData) {
 
-        const name = [
-            user.first_name,
-            user.last_name
-        ]
-            .filter(Boolean)
-            .join(" ");
+            statusElement.textContent =
+                "Mini App открыт не из Telegram";
 
-        userElement.textContent =
-            `${name} (@${user.username || "без username"})`;
+            statusElement.className =
+                "error";
 
-    } else {
+            userElement.textContent =
+                "Нет Telegram initData";
 
-        userElement.textContent =
-            "Mini App открыт не из Telegram";
+            cityElement.textContent =
+                "—";
 
+            cityIdElement.textContent =
+                "—";
+
+            return;
+        }
+
+
+        statusElement.textContent =
+            "Авторизация...";
+
+
+        try {
+
+            const response = await fetch(
+                `${API_URL}/auth`,
+                {
+                    method: "POST",
+
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+
+                    body: JSON.stringify({
+                        initData: tg.initData
+                    })
+                }
+            );
+
+
+            const data =
+                await response.json();
+
+
+            if (!response.ok || !data.success) {
+
+                throw new Error(
+                    data.error ||
+                    "Ошибка авторизации"
+                );
+            }
+
+
+            const player =
+                data.player;
+
+            const city =
+                data.city;
+
+
+            const playerName = [
+                player.first_name,
+                player.last_name
+            ]
+                .filter(Boolean)
+                .join(" ");
+
+
+            userElement.textContent =
+                `${playerName} (@${
+                    player.username || "без username"
+                })`;
+
+
+            cityElement.textContent =
+                city.name;
+
+
+            cityIdElement.textContent =
+                city.id;
+
+
+            statusElement.textContent =
+                "Авторизация успешна";
+
+
+        } catch (error) {
+
+            console.error(error);
+
+            statusElement.textContent =
+                "Ошибка авторизации";
+
+            statusElement.className =
+                "error";
+
+            userElement.textContent =
+                error.message;
+
+            cityElement.textContent =
+                "—";
+
+            cityIdElement.textContent =
+                "—";
+        }
     }
+
+
+    authenticate();
+
 </script>
 
 </body>
