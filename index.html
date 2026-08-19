@@ -8,16 +8,22 @@
     content="width=device-width, initial-scale=1.0"
   >
 
+  <meta
+    name="telegram-web-app-capable"
+    content="yes"
+  >
+
   <title>ПОСЕЛЕНИЕ</title>
 
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+  <script>
+    window.addEventListener("DOMContentLoaded", () => {
+      window.location.href = "loading.html";
+    });
+  </script>
 </head>
 
 <body>
-
-<script>
-  window.location.replace("./loading.html");
-</script>
-
 </body>
 </html>
