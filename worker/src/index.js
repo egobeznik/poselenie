@@ -103,43 +103,90 @@ export default {
         }, 401);
       }
 
-      const player =
-        await getOrCreatePlayer(
-          telegramUser,
-          env
-        );
+      if (url.pathname === "/auth") {
+        return json({
+          success: true,
 
-      const city =
-        await getOrCreateCity(
-          player.id,
-          env
-        );
+          user: {
+            id: telegramUser.id,
+            username:
+              telegramUser.username ?? null,
 
-      return json({
-        success: true,
+            first_name:
+              telegramUser.first_name ?? null,
 
-        player: {
-          id: player.id,
-          telegram_id: player.telegram_id,
-          username: player.username,
-          first_name: player.first_name,
-          last_name: player.last_name,
-          photo_url: player.photo_url
-        },
+            last_name:
+              telegramUser.last_name ?? null,
 
-        city: {
-          id: city.id,
-          name: city.name,
-          is_public: city.is_public
-        }
-      });
+            photo_url:
+              telegramUser.photo_url ?? null
+          }
+        });
+      }
 
-    } catch (error) {
-      console.error("Worker error:", error);
+      if (url.pathname === "/player") {
+        const player =
+          await getOrCreatePlayer(
+            telegramUser,
+            env
+          );
+
+        return json({
+          success: true,
+
+          player: {
+            id: player.id,
+            telegram_id: player.telegram_id,
+            username: player.username,
+            first_name: player.first_name,
+            last_name: player.last_name,
+            photo_url: player.photo_url
+          }
+        });
+      }
+
+      if (url.pathname === "/city") {
+        const player =
+          await getOrCreatePlayer(
+            telegramUser,
+            env
+          );
+
+        const city =
+          await getOrCreateCity(
+            player.id,
+            env
+          );
+
+        return json({
+          success: true,
+
+          city: {
+            id: city.id,
+            name: city.name,
+            is_public: city.is_public
+          }
+        });
+      }
 
       return json({
         success: false,
-        error: error instanceof Error ? error.message : String(error)
+        error: "Route not found"
+      }, 404);
+
+    } catch (error) {
+      console.error(
+        "Worker error:",
+        error
+      );
+
+      return json({
+        success: false,
+
+        error:
+          error instanceof Error
+            ? error.message
+            : String(error)
       }, 500);
     }
   }
@@ -488,8 +535,8 @@ async function supabaseRequest(
     );
 
     throw new Error(
-  `Supabase request failed: ${response.status} ${errorText}`
-);
+      `Supabase request failed: ${response.status} ${errorText}`
+    );
   }
 
   return response.json();
